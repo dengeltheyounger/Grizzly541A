@@ -25,9 +25,11 @@ module cpu(
     input Clock
     );
     
-    reg [7:0] a;
-    reg [7:0] b;
-    reg [7:0] out;
+    reg [7:0] a_reg;
+    reg [7:0] b_reg;
+    wire [7:0] a;
+    wire [7:0] b;
+    wire [7:0] out;
     wire overflow;
     wire [2:0] opcode;
     reg [2:0] alu_opcode;
@@ -40,7 +42,8 @@ module cpu(
     wire [15:0] instruction;
     
     wire arithmetic;
-    wire logic;
+    /* logic is apparently a keyword */
+    wire logicx;
     wire call;
     wire ldi;
     wire push;
@@ -63,10 +66,18 @@ module cpu(
     wire ram_write_enable;
     reg stack_in_enable;
     reg [15:0] stack_in;
-    
+    reg do_advance;
+    reg c1_out;
+    reg c2_out;
+    reg c3_out;
+    reg [15:0] tmp_reg;
+
     assign opcode = instruction[2:0];
-    
-    alu(    .A(a), 
+    assign a = a_reg;
+    assign b = b_reg;
+
+    alu Alu(    
+	    .A(a), 
             .B(b), 
             .O(out), 
             .Overflow(overflow), 
@@ -75,18 +86,20 @@ module cpu(
             .Enable(aluEnable)
             );
             
-    instruction_fetcher(    .PCSet(pcIn),
+    instruction_fetcher Instruction_Fetcher(    
+	    		    .PCSet(pcIn),
                             .Branch(branch),
                             .Reset(Reset),
-                            .Clock(Clock1),
+                            .Clock(c1_out),
                             .PC(pc),
                             .Instruction(instruction)
                         );
     
-    instruction_decoder(    .Instruction(instruction),
-                            .Clock(Clock1),
+    instruction_decoder Instruction_Decoder(    
+	    		    .Instruction(instruction),
+                            .Clock(c1_out),
                             .Arithmetic(arithmetic),
-                            .Logic(logic),
+                            .Logic(logicx),
                             .Branch(branch),
                             .Call(call),
                             .Ldi(ldi),
@@ -99,7 +112,8 @@ module cpu(
                             .RegS2(regs2_sel)
                             );
                             
-    register_file(  .RegIn(regs1_new_val),
+    register_file Register_File(  
+	    	    .RegIn(regs1_new_val),
                     .RegInSel(regs1_sel),
                     .RegS1Out(regs1),
                     .RegS1Sel(regs1_sel),
@@ -108,8 +122,8 @@ module cpu(
                     .SregIn(sreg_in),
                     .SregEn(sreg_en),
                     .RegEnable(reg_enable),
-                    .Clock1(Clock1),
-                    .Clock2(Clock2),
+                    .Clock1(c1_out),
+                    .Clock2(c2_out),
                     .SregOut(sreg_out),
                     .PCOut(pc),
                     .StackInEnable(stack_in_enable),
@@ -117,25 +131,33 @@ module cpu(
                     );      
                     
                     
-   ram( .AddrIn(ram_addr_in),
+   ram Ram( 
+	.AddrIn(ram_addr_in),
         .AddrOut(ram_addr_out),
         .DataIn(ram_data_in),
         .DataOut(ram_data_out),
-        .Clock1(Clock1),
-        .Clock2(Clock2),
-        .Clock3(Clock3),
+        .Clock1(c1_out),
+        .Clock2(c2_out),
+        .Clock3(c3_out),
         .WriteEnable(ram_write_enable)
         );
         
-    clock(  
+    clock ClockInst(	
+	    	.Cin(Clock),
+	  	.Reset(Reset),
+	      	.Advance(do_advance),
+		.C1_Out(c1_out),
+		.C2_Out(c2_out),
+		.C3_Out(c3_out)
+	);
                     
-    always @ (posedge Clock1 or posedge Clock2 or posedge Clock3) begin
-        if (arithmetic || logic) begin
+    always @ (posedge c1_out or posedge c2_out or posedge c3_out) begin
+        if (arithmetic == 1 || logicx == 1) begin
             alu_opcode = opcode;
             alu_fcode = fcode;
             aluEnable = 1;
-            a <= regs1;
-            b <= regs2;
+            a_reg <= regs1;
+            b_reg <= regs2;
             reg_enable = 1;
             regs1_new_val = out;
             sreg_en = 1;
@@ -184,37 +206,71 @@ module cpu(
             sreg_in = 8'b00000000;
         end
         if (call) begin
-            if (Clock1 == 1) begin
-                // Increment the stack  pointer
-                /*
-                 * The register file has not been used yet during this call.
-                 */
-                regs1_sel <= 5'b10000;
-                regs2_sel <= 5'b10001;
-                stack_in_enable = 1;
-                stack_in = {regs2,regs1} + 1;
-                /*
-                 * While we write to the stack, we're also going to "push" the
-                 * return address to the stack. We're going to do the first 
-                 * 8 bits in this clock cycle (meaning we're LSB)
-                 */
-                ram_addr_in = stack_in;
-                ram_data_in = pc[7:0];
-            end else if (Clock == 2) begin
-                /*
-                 * Now we're going to increment the stack pointer again and
-                 * push the second 8 bits of the pc onto the stack
-                 */
-                 regs1_sel <= 5'b10000;
-                 regs2_sel <= 5'b10001;
-                 stack_in_enable = 1;
-                 stack_in = {regs2,regs1} + 1;
-                ram_addr_in = stack_in;
-                ram_data_in = pc[15:0];
-                // Now clear the status reg.
-                sreg_en <= 1;
-                sreg_in = 8'b00000000;
-            end             
-        end  
+	    	case (fcode)
+ 	   		2'b00: begin
+            	if (c1_out == 1) begin
+                	// Increment the stack  pointer
+                	/*
+                 	 * The register file has not been used yet during this call.
+                 	 */
+                	regs1_sel <= 5'b10000;
+                	regs2_sel <= 5'b10001;
+                	stack_in_enable = 1;
+               		stack_in = {regs2,regs1} + 1;
+                	/*
+                 	 * While we write to the stack, we're also going to "push" the
+                 	 * return address to the stack. We're going to do the first 
+                 	 * 8 bits in this clock cycle (meaning we're LSB)
+                 	 */
+		   			ram_write_enable = 1;
+                	ram_addr_in = stack_in;
+                	ram_data_in = pc[7:0];
+		    		do_advance <= 1;
+            	end else if (c2_out == 1) begin
+                	/*
+                 	 * Now we're going to increment the stack pointer again and
+                 	 * push the second 8 bits of the pc onto the stack
+                 	 */
+                	regs1_sel <= 5'b10000;
+                 	regs2_sel <= 5'b10001;
+                	stack_in_enable = 1;
+                	stack_in = {regs2,regs1} + 1;
+					ram_write_enable = 1;
+                	ram_addr_in = stack_in;
+                	ram_data_in = pc[15:8];
+                	// Now clear the status reg.
+                	sreg_en <= 1;
+                	sreg_in = 8'b00000000;
+					do_advance <= 0;
+            	end
+	    	end	
+	    	2'b01: begin
+				if (c1_out == 1) begin
+		    		/*
+		     	 	 * Get what's on the stack. Pop the stack each time.
+		     	 	 * This is the MSB
+		     	 	 */	
+		    		regs1_sel <= 5'b10000;
+					regs2_sel <= 5'b10001;
+		    		ram_addr_out = {regs2,regs1};
+	    	    	tmp_reg <= ((ram_data_out << 8) & 0xff00); 
+		    		stack_in_enable <= 1;
+		    		stack_in = {regs2,regs1} - 1;
+		    		do_advance <= 1;
+	        	end else if (c2_out == 1) begin
+		   			regs1_sel <= 5'b10000;
+		    		regs2_sel <= 5'b10001;
+		    		ram_addr_out = {regs2,regs1};
+		    		/* Now add the LSB */
+		    		pcIn <= tmp_reg + (ram_data_out & 0x00ff);
+					// The return address is now in the program counter.
+					pcIn = temp_reg;
+					// Decrement the stack pointer a second time.				
+					stack_in_enable <= 1;
+					stack_in = {regs2,regs1} - 1;
+					do_advance <= 0;
+	    		end
+        	end
+		end	
     end
 endmodule

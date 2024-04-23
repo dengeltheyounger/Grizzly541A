@@ -24,9 +24,9 @@ module clock(
     input Cin,
     input Reset,
     input Advance,
-    output C1_Out,
-    output C2_Out,
-    output C3_Out
+    output reg C1_Out,
+    output reg C2_Out,
+    output reg C3_Out
     );
     
     reg [1:0] count;
@@ -66,6 +66,7 @@ module clock(
                     C2_Out <= 0;
                     C3_Out <= 0;
                     count <= 0;
+		end
             endcase
         end else begin
             C1_Out <= 1;
@@ -73,5 +74,6 @@ module clock(
             C3_Out <= 1;
             count <= 0;
         end
+    end
                
 endmodule

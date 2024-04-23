@@ -31,13 +31,13 @@ module ram(
     input WriteEnable
     );
     
-    reg [7:0] mem[65535:0];
+    reg [7:0] memory[65535:0];
     
     always @ (posedge Clock1 or posedge Clock2 or posedge Clock3) begin
-        DataOut = mem[AddrOut];
+        DataOut = memory[AddrOut];
         
         if (WriteEnable) begin
-            mem[AddrIn] = DataIn;
+            memory[AddrIn] = DataIn;
         end
     end
 endmodule
